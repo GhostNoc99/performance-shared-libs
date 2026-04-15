@@ -20,6 +20,7 @@ def qualityGate(String testType, String jsonPath) {
     def errorThreshold = testType == 'stress' ? 5.0  : 1.0
 
     echo "🔍 Evaluando Quality Gate..."
+    echo "Tipo: ${testType.toUpperCase()}"
     echo "Umbral p95:   < ${p95Threshold}ms"
     echo "Umbral error: < ${errorThreshold}%"
 
@@ -37,21 +38,33 @@ def qualityGate(String testType, String jsonPath) {
     def p95       = getVal('p95')
     def errorRate = getVal('errorRate') * 100
 
-    echo "📊 P95:        ${String.format('%.2f', p95)}ms"
-    echo "📊 Error rate: ${String.format('%.2f', errorRate)}%"
+    echo "📊 P95 medido:        ${String.format('%.2f', p95)}ms"
+    echo "📊 Error rate medido: ${String.format('%.2f', errorRate)}%"
 
-    if (p95 < p95Threshold && errorRate < errorThreshold) {
+    def p95Pass   = p95 < p95Threshold
+    def errorPass = errorRate < errorThreshold
+
+    if (p95Pass && errorPass) {
         echo "✅ QUALITY GATE PASSED"
+        echo "   P95: ${String.format('%.2f', p95)}ms < ${p95Threshold}ms ✅"
+        echo "   Error: ${String.format('%.2f', errorRate)}% < ${errorThreshold}% ✅"
+        currentBuild.result = 'SUCCESS'
     } else {
         def msg = "❌ QUALITY GATE FAILED\n"
-        if (p95 >= p95Threshold)   msg += "   P95: ${String.format('%.2f', p95)}ms >= ${p95Threshold}ms\n"
-        if (errorRate >= errorThreshold) msg += "   Error: ${String.format('%.2f', errorRate)}% >= ${errorThreshold}%\n"
+        if (!p95Pass)   msg += "   P95: ${String.format('%.2f', p95)}ms >= ${p95Threshold}ms ❌\n"
+        if (!errorPass) msg += "   Error: ${String.format('%.2f', errorRate)}% >= ${errorThreshold}% ❌\n"
+        currentBuild.result = 'FAILURE'
         error(msg)
     }
 }
 
 def parseMetrics(String jsonPath) {
-    if (!fileExists(jsonPath)) return [:]
+    if (!fileExists(jsonPath)) return [
+        iterations: '0', reqRate: '0/s', errorRate: '0.00%',
+        avg: '0ms', min: '0ms', max: '0ms',
+        p50: '0ms', p90: '0ms', p95: '0ms', p99: '0ms'
+    ]
+
     def jsonText = readFile(jsonPath)
     def getVal = { String key ->
         def m = (jsonText =~ /"${key}"\s*:\s*([\d.]+)/)
