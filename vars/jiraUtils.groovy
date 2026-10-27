@@ -1,32 +1,63 @@
 def transition(String issueKey, String transitionId, String token) {
-    sh """
-        curl -s -X POST \\
-          -H 'Content-Type: application/json' \\
-          -u 'newprojectcv.1999@gmail.com:${token}' \\
-          -d '{"transition": {"id": "${transitionId}"}}' \\
-          'https://mi-ecosistema.atlassian.net/rest/api/3/issue/${issueKey}/transitions'
-    """
+    withEnv(["ATLASSIAN_TOKEN=${token}"]) {
+        sh """
+            curl -s -X POST \\
+              -H 'Content-Type: application/json' \\
+              -u "newprojectcv.1999@gmail.com:\$ATLASSIAN_TOKEN" \\
+              -d '{"transition": {"id": "${transitionId}"}}' \\
+              'https://mi-ecosistema.atlassian.net/rest/api/3/issue/${issueKey}/transitions'
+        """
+    }
 }
 
+// El mensaje puede traer saltos de línea, comillas, | y *.
+// Se arma el JSON con JsonOutput (una línea = un párrafo ADF) y se envía desde archivo.
 def comment(String issueKey, String mensaje, String token) {
-    sh """
-        curl -s -X POST \\
-          -H 'Content-Type: application/json' \\
-          -u 'newprojectcv.1999@gmail.com:${token}' \\
-          -d '{"body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "${mensaje}"}]}]}}' \\
-          'https://mi-ecosistema.atlassian.net/rest/api/3/issue/${issueKey}/comment'
-    """
+    def paragraphs = []
+    for (String line : mensaje.split('\n')) {
+        if (line.trim()) {
+            paragraphs << [type: 'paragraph', content: [[type: 'text', text: line]]]
+        }
+    }
+
+    def payload = [body: [type: 'doc', version: 1, content: paragraphs]]
+
+    writeFile file: 'jira-comment.json',
+              text: groovy.json.JsonOutput.toJson(payload),
+              encoding: 'UTF-8'
+
+    withEnv(["ATLASSIAN_TOKEN=${token}"]) {
+        def http = sh(
+            script: '''
+                curl -s -o jira-comment-response.json -w "%{http_code}" -X POST \
+                  -H 'Content-Type: application/json' \
+                  -u "newprojectcv.1999@gmail.com:$ATLASSIAN_TOKEN" \
+                  --data-binary @jira-comment.json \
+                  "https://mi-ecosistema.atlassian.net/rest/api/3/issue/''' + issueKey + '''/comment"
+            ''',
+            returnStdout: true
+        ).trim()
+
+        if (http == '201') {
+            echo "✅ Comentario publicado en ${issueKey}"
+        } else {
+            echo "⚠️ Jira respondió HTTP ${http} al comentar en ${issueKey}"
+            sh 'cat jira-comment-response.json || true'
+        }
+    }
 }
 
 def attach(String issueKey, String filePath, String token) {
     if (fileExists(filePath)) {
-        sh """
-            curl -s -X POST \\
-              -H 'X-Atlassian-Token: no-check' \\
-              -u 'newprojectcv.1999@gmail.com:${token}' \\
-              -F 'file=@${filePath}' \\
-              'https://mi-ecosistema.atlassian.net/rest/api/3/issue/${issueKey}/attachments'
-        """
+        withEnv(["ATLASSIAN_TOKEN=${token}"]) {
+            sh """
+                curl -s -X POST \\
+                  -H 'X-Atlassian-Token: no-check' \\
+                  -u "newprojectcv.1999@gmail.com:\$ATLASSIAN_TOKEN" \\
+                  -F 'file=@${filePath}' \\
+                  'https://mi-ecosistema.atlassian.net/rest/api/3/issue/${issueKey}/attachments'
+            """
+        }
     } else {
         echo "⚠️ Reporte no encontrado en ${filePath} — omitiendo adjunto"
     }
